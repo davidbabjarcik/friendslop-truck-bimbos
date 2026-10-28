@@ -228,7 +228,7 @@ let gotFull = false;
 let userLeft = false;          // hráč sa odpojil cez menu → bez reconnectu
 let S = null;                 // posledný tick zo servera
 let lastTickAt = 0;
-
+let canSend = true;
 function connect(host) {
   clearTimeout(reconnectTimer);
   hostIp = host;
@@ -294,6 +294,7 @@ function handleMsg(m) {
 }
 
 function onTick(m) {
+  canSend = true; // ZMENA: Server poslal odpoveď, môžeme znova poslať input
   const prev = S;
   S = m;
   lastTickAt = performance.now();
@@ -1228,14 +1229,12 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => { keys.delete(e.code); });
 addEventListener('blur', () => keys.clear());
 
-let lastSendTime = 0;
 function pollInput() {
   if (!myId || !ws || ws.readyState !== WebSocket.OPEN) return;
   
-  // Ochrana siete: odošle paket maximálne raz za 40 ms (25 Hz)
-  const now = performance.now();
-  if (now - lastSendTime < 40) return;
-  lastSendTime = now;
+  // ZMENA: Odošleme dáta len vtedy, ak máme povolenie (čiže server potvrdil predošlý stav)
+  if (!canSend) return;
+  canSend = false;
 
   const k_key = (c) => keys.has(c);
   const msg = { type: 'input', role: myRole };
