@@ -531,11 +531,15 @@ function updateWarehouse(dt, now) {
       localPlayer.x = o.tx;
       localPlayer.z = o.tz;
     }
-    // dx a dz musia ostať pod týmto kódom tak, ako boli:
-    const dx = o.tx - o.g.position.x;
-    const dz = o.tz - o.g.position.z;
-    if (Math.hypot(dx, dz) > 6) o.g.position.set(o.tx, 0, o.tz);
-    else { o.g.position.x += dx * k; o.g.position.z += dz * k; }
+      const dx = o.tx - o.g.position.x;
+      const dz = o.tz - o.g.position.z;
+      if (Math.hypot(dx, dz) > 6) {
+        o.g.position.set(o.tx, 0, o.tz);
+      } else { 
+        const smoothK = (id === myId) ? k : (1 - Math.exp(-6 * dt)); 
+        o.g.position.x += dx * smoothK; 
+        o.g.position.z += dz * smoothK; 
+      }
     const moving = Math.hypot(dx, dz) > 0.03;
     if (moving) {
       o.g.rotation.y = angleLerp(o.g.rotation.y, Math.atan2(-dx, -dz), 1 - Math.exp(-12 * dt));
@@ -1224,20 +1228,24 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => { keys.delete(e.code); });
 addEventListener('blur', () => keys.clear());
 
-let lastSentInput = '';
+let lastSendTime = 0;
 function pollInput() {
   if (!myId || !ws || ws.readyState !== WebSocket.OPEN) return;
+  
+  const now = performance.now();
+  if (now - lastSendTime < 40) return;
+  lastSendTime = now;
+
   const k_key = (c) => keys.has(c);
   const msg = { type: 'input', role: myRole };
   
   if (S && S.phase === 'warehouse') {
-    // Odosielame exaktnú lokálnu pozíciu
-    msg.pos = { x: Math.round(localPlayer.x * 1000) / 1000, z: Math.round(localPlayer.z * 1000) / 1000 };
+    msg.pos = { x: Math.round(localPlayer.x * 100) / 100, z: Math.round(localPlayer.z * 100) / 100 };
   }
   if (myRole === 'driver') {
     msg.keys = { horn: k_key('Space') };
     if (S && S.phase === 'driving') {
-      msg.truckX = Math.round(localTruckX * 1000) / 1000;
+      msg.truckX = Math.round(localTruckX * 100) / 100;
     }
   }
   
