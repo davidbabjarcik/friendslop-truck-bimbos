@@ -1232,6 +1232,7 @@ let lastSendTime = 0;
 function pollInput() {
   if (!myId || !ws || ws.readyState !== WebSocket.OPEN) return;
   
+  // Ochrana siete: odošle paket maximálne raz za 40 ms (25 Hz)
   const now = performance.now();
   if (now - lastSendTime < 40) return;
   lastSendTime = now;
@@ -1240,12 +1241,12 @@ function pollInput() {
   const msg = { type: 'input', role: myRole };
   
   if (S && S.phase === 'warehouse') {
-    msg.pos = { x: Math.round(localPlayer.x * 100) / 100, z: Math.round(localPlayer.z * 100) / 100 };
+    msg.pos = { x: Math.round(localPlayer.x * 1000) / 1000, z: Math.round(localPlayer.z * 1000) / 1000 };
   }
   if (myRole === 'driver') {
     msg.keys = { horn: k_key('Space') };
     if (S && S.phase === 'driving') {
-      msg.truckX = Math.round(localTruckX * 100) / 100;
+      msg.truckX = Math.round(localTruckX * 1000) / 1000;
     }
   }
   
