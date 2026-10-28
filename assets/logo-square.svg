@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000">
+  <title>Friendslop Truck</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6FC3E6"/>
+      <stop offset="1" stop-color="#C4E8F6"/>
+    </linearGradient>
+  </defs>
+  <rect width="1000" height="1000" fill="url(#sky)"/>
+
+  <!-- sun + clouds -->
+  <circle cx="925" cy="72" r="46" fill="#FFD700" opacity=".9"/>
+  <g fill="#FFFFFF" opacity=".85">
+    <rect x="70" y="470" width="120" height="26" rx="13"/><rect x="100" y="452" width="60" height="26" rx="13"/>
+    <rect x="770" y="455" width="140" height="26" rx="13"/><rect x="810" y="437" width="70" height="26" rx="13"/>
+  </g>
+
+  <!-- low-poly hills -->
+  <polygon points="0,700 130,600 260,670 400,580 520,660 660,590 800,660 910,600 1000,640 1000,1000 0,1000" fill="#7CB87A"/>
+  <polygon points="0,700 130,600 165,690" fill="#6AA868"/>
+  <polygon points="400,580 520,660 440,680" fill="#6AA868"/>
+  <polygon points="910,600 1000,640 940,680" fill="#6AA868"/>
+
+  <!-- trees -->
+  <g>
+    <polygon points="40,770 80,650 120,770" fill="#2D6A2D"/><polygon points="80,650 120,770 88,770" fill="#245824"/>
+    <rect x="74" y="770" width="12" height="20" fill="#8B5E3C"/>
+    <polygon points="110,780 140,700 170,780" fill="#2D6A2D"/><polygon points="140,700 170,780 146,780" fill="#245824"/>
+    <rect x="135" y="780" width="10" height="14" fill="#8B5E3C"/>
+    <polygon points="840,775 880,645 920,775" fill="#2D6A2D"/><polygon points="880,645 920,775 888,775" fill="#245824"/>
+    <rect x="874" y="775" width="12" height="18" fill="#8B5E3C"/>
+    <polygon points="905,785 935,705 965,785" fill="#2D6A2D"/><polygon points="935,705 965,785 941,785" fill="#245824"/>
+    <rect x="930" y="785" width="10" height="12" fill="#8B5E3C"/>
+  </g>
+
+  <!-- road -->
+  <rect x="0" y="800" width="1000" height="200" fill="#555566"/>
+  <rect x="0" y="800" width="1000" height="10" fill="#FFD700"/>
+  <rect x="0" y="986" width="1000" height="14" fill="#FFD700"/>
+  <g fill="#FFFFFF">
+    <rect x="30" y="893" width="110" height="12"/><rect x="230" y="893" width="110" height="12"/>
+    <rect x="430" y="893" width="110" height="12"/><rect x="630" y="893" width="110" height="12"/>
+    <rect x="830" y="893" width="110" height="12"/>
+  </g>
+
+  <!-- truck (same drawing as the wide logo, scaled 2×) -->
+  <g transform="translate(206,446) scale(2)">
+    <ellipse cx="150" cy="182" rx="160" ry="10" fill="#000" opacity=".2"/>
+    <polygon points="0,30 14,16 214,16 200,30" fill="#FF8A5C"/>
+    <polygon points="200,30 214,16 214,136 200,150" fill="#CC4422"/>
+    <rect x="0" y="30" width="200" height="120" fill="#FF6B35"/>
+    <rect x="0" y="136" width="200" height="14" fill="#CC4422"/>
+    <rect x="22" y="48" width="34" height="34" fill="#F4C430"/><rect x="22" y="60" width="34" height="6" fill="#8B5E3C"/>
+    <rect x="64" y="48" width="34" height="34" fill="#F4C430"/><rect x="64" y="60" width="34" height="6" fill="#8B5E3C"/>
+    <polygon points="214,62 226,50 272,50 290,80 290,150 214,150" fill="#CC4422"/>
+    <polygon points="226,50 272,50 268,56 230,56" fill="#E0573A"/>
+    <polygon points="232,62 268,62 284,90 232,90" fill="#1A1A2E"/>
+    <rect x="276" y="122" width="16" height="10" fill="#FFD700"/>
+    <rect x="214" y="146" width="80" height="10" fill="#222222"/>
+    <rect x="236" y="24" width="10" height="30" fill="#222222"/>
+    <g fill="#222222"><circle cx="40" cy="160" r="20"/><circle cx="92" cy="160" r="20"/><circle cx="252" cy="160" r="20"/></g>
+    <g fill="#555566"><rect x="32" y="152" width="16" height="16"/><rect x="84" y="152" width="16" height="16"/><rect x="244" y="152" width="16" height="16"/></g>
+  </g>
+
+  <!-- crosshair on the truck's tail -->
+  <g transform="translate(860,560)" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" fill="none">
+    <circle r="34" stroke="#1A1A2E" stroke-width="13"/>
+    <circle r="34"/>
+    <line x1="0" y1="-58" x2="0" y2="-44" stroke="#FF4444"/><line x1="0" y1="44" x2="0" y2="58" stroke="#FF4444"/>
+    <line x1="-58" y1="0" x2="-44" y2="0" stroke="#FF4444"/><line x1="44" y1="0" x2="58" y2="0" stroke="#FF4444"/>
+  </g>
+
+  <!-- title -->
+  <g font-family="'Trebuchet MS','Arial Black',Verdana,sans-serif" font-weight="900" text-anchor="middle">
+    <text x="508" y="218" font-size="132" fill="#1A1A2E" opacity=".3">FRIENDSLOP</text>
+    <text x="500" y="210" font-size="132" fill="#FF6B35" stroke="#1A1A2E" stroke-width="5" paint-order="stroke">FRIENDSLOP</text>
+    <text x="508" y="378" font-size="176" fill="#1A1A2E" opacity=".3">TRUCK</text>
+    <text x="500" y="370" font-size="176" fill="#FFD700" stroke="#1A1A2E" stroke-width="6" paint-order="stroke">TRUCK</text>
+    <text x="500" y="430" font-size="34" font-weight="700" fill="#1A1A2E" letter-spacing="3">CO-OP · ŠOFÉR + STRELEC</text>
+  </g>
+</svg>

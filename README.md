@@ -107,6 +107,17 @@ Ceny: 💰100 → 💰200 → 💰350. Ak niekto vypadne, hra sa pozastaví a **
 | 💡 **Nápad** | **mitkos** |
 | 💻 **Kód** | **dodo** a **Dejvo** |
 
+## 🎨 Logo
+
+<img src="assets/logo-1000.png" alt="Friendslop Truck — štvorcové logo" width="220" align="right">
+
+- [`assets/logo-1000.png`](assets/logo-1000.png) — štvorcové 1000×1000 (profilovka, Discord, ikona)
+- [`assets/logo-square.svg`](assets/logo-square.svg) — to isté vektorovo (ľubovoľná veľkosť)
+- [`assets/logo.svg`](assets/logo.svg) — široký banner
+- [`assets/icon.svg`](assets/icon.svg) — malá ikona (karta prehliadača)
+
+<br clear="right">
+
 ## 🧩 Ako to funguje
 
 ```
