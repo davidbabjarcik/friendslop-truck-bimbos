@@ -333,11 +333,10 @@ function warehouseTick(dt) {
     const p = s.players[id];
     if (!p.connected) continue;
     const inp = inputs[id];
-    let mx = inp.moveX, mz = inp.moveZ;
-    const len = Math.hypot(mx, mz);
-    if (len > 1) { mx /= len; mz /= len; }
-    p.x = clamp(p.x + mx * PLAYER_SPEED * dt, WH.minX, WH.maxX);
-    p.z = clamp(p.z + mz * PLAYER_SPEED * dt, WH.minZ, WH.maxZ);
+    
+    // ZMENA: Aplikujeme klientskú pozíciu postavičky (s clamp ochranou voči stenám)
+    if (inp.absX !== undefined) p.x = clamp(inp.absX, WH.minX, WH.maxX);
+    if (inp.absZ !== undefined) p.z = clamp(inp.absZ, WH.minZ, WH.maxZ);
 
     const carried = s.boxes.find((b) => b.carriedBy === id);
     if (carried) {
@@ -376,8 +375,12 @@ function warehouseTick(dt) {
 function drivingTick(dt) {
   const s = state;
   const inp = inputs[1];
-  const steer = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
-  s.truckX = clamp(s.truckX + steer * STEER_SPEED * dt, -TRUCK_CLAMP, TRUCK_CLAMP);
+  
+  // ZMENA: Klient priamo určuje pohyb kamiónu
+  if (inp.absTruckX !== undefined) {
+    s.truckX = clamp(inp.absTruckX, -TRUCK_CLAMP, TRUCK_CLAMP);
+  }
+  
   s.dist = Math.min(TRIP_DIST, s.dist + truckSpeed() * dt);
   s.fuel = Math.max(0, s.fuel - (FUEL_DRAIN / (1 + s.upgrades.engine * 0.1)) * dt);
   s.gunCooldown = Math.max(0, s.gunCooldown - dt);
@@ -430,18 +433,21 @@ function handleShop(id, msg) {
 function handleMessage(id, msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.type === 'input') {
-    // rola sa berie podľa id spojenia, nie podľa msg.role
     const inp = inputs[id];
-    if (msg.warehouseMove && typeof msg.warehouseMove === 'object') {
-      inp.moveX = clamp(num(msg.warehouseMove.x), -1, 1);
-      inp.moveZ = clamp(num(msg.warehouseMove.z), -1, 1);
+    
+    // ZMENA: Ak klient poslal presnú pozíciu, preberieme ju
+    if (msg.pos) {
+      inp.absX = msg.pos.x;
+      inp.absZ = msg.pos.z;
     }
+    if (msg.truckX !== undefined) {
+      inp.absTruckX = msg.truckX;
+    }
+
     if (id === 1 && msg.keys && typeof msg.keys === 'object') {
       const hornNow = !!msg.keys.horn;
       if (hornNow && !inp.horn) tryHorn();
       inp.horn = hornNow;
-      inp.left = !!msg.keys.left;
-      inp.right = !!msg.keys.right;
     }
     if (id === 2) {
       if (msg.aspect !== undefined) inp.aspect = clamp(num(msg.aspect, 16 / 9), 0.3, 4);

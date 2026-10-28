@@ -158,7 +158,8 @@ const UPGRADES = [
   { key: 'horn',      name: 'Trúba',  icon: '📯', desc: (l) => `Dosah ${18 + l * 6}, stun ${2 + l * 0.5} s, reload strelca ${(0.4 - l * 0.08).toFixed(2)} s` },
   { key: 'warehouse', name: 'Sklad',  icon: '📦', desc: (l) => `${8 + l * 2} škatúľ na jazdu (viac peňazí)` },
 ];
-
+let localPlayer = { x: 0, z: 0 };
+let localTruckX = 0;
 const ROAD_TILE = 20;
 const ROAD_TILES = 16;
 const ROAD_W = 9;
@@ -429,8 +430,11 @@ function syncPlayers() {
       o.g.position.set(p.x, 0, p.z);
       playerMeshes.set(id, o);
     }
-    o.tx = p.x;
-    o.tz = p.z;
+    // ZMENA: Iba druhého hráča updatujeme podľa servera. Seba si riešime lokálne.
+    if (id !== myId) {
+      o.tx = p.x;
+      o.tz = p.z;
+    }
     o.g.visible = p.connected;
   }
 }
@@ -458,6 +462,20 @@ const camTarget = new THREE.Vector3();
 function updateWarehouse(dt, now) {
   const k = 1 - Math.exp(-LERP * dt);
   for (const [id, o] of playerMeshes) {
+    if (id === myId) {
+      // ZMENA: Vypočítame vlastný pohyb úplne hladko podľa frameratu
+      const k_key = (c) => keys.has(c);
+      let mx = (k_key('KeyD') || k_key('ArrowRight') ? 1 : 0) - (k_key('KeyA') || k_key('ArrowLeft') ? 1 : 0);
+      let mz = (k_key('KeyS') || k_key('ArrowDown') ? 1 : 0) - (k_key('KeyW') || k_key('ArrowUp') ? 1 : 0);
+      const len = Math.hypot(mx, mz);
+      if (len > 1) { mx /= len; mz /= len; }
+      
+      o.tx = clamp(o.tx + mx * 7 * dt, -10.8, 10.8);
+      o.tz = clamp(o.tz + mz * 7 * dt, -7.4, 9.2);
+      localPlayer.x = o.tx;
+      localPlayer.z = o.tz;
+    }
+    // dx a dz musia ostať pod týmto kódom tak, ako boli:
     const dx = o.tx - o.g.position.x;
     const dz = o.tz - o.g.position.z;
     if (Math.hypot(dx, dz) > 6) o.g.position.set(o.tx, 0, o.tz);
@@ -679,14 +697,19 @@ function onShotHit(id) {
 const disp = { dist: 0, truckX: 0 };
 function updateDriving(dt, now) {
   const live = S.phase === 'driving' && !S.paused;
-  let target = S.dist + (live ? S.speed * Math.min((now - lastTickAt) / 1000, 0.12) : 0);
-  target = Math.min(target, TRIP_DIST);
-  if (Math.abs(target - disp.dist) > 15) disp.dist = target;
-  else disp.dist += (target - disp.dist) * (1 - Math.exp(-25 * dt));
-  const steerDiff = S.truckX - disp.truckX;
+  
+  // ZMENA: Plynulý lokálny posun kamiónu
+  if (myRole === 'driver' && live) {
+    const k_key = (c) => keys.has(c);
+    const steer = (k_key('KeyD') || k_key('ArrowRight') ? 1 : 0) - (k_key('KeyA') || k_key('ArrowLeft') ? 1 : 0);
+    localTruckX = clamp(localTruckX + steer * 6 * dt, -2.5, 2.5);
+  } else if (S) {
+    localTruckX = S.truckX;
+  }
+  
+  // Pre výpočet použijeme lokálny localTruckX namiesto serverového S.truckX
+  const steerDiff = localTruckX - disp.truckX;
   disp.truckX += steerDiff * (1 - Math.exp(-LERP * dt));
-  const tz = -disp.dist;
-
   truck.g.position.set(disp.truckX, live ? Math.abs(Math.sin(now * 0.018)) * 0.04 : 0, tz);
   truck.g.rotation.y = -steerDiff * 0.3;
   if (live) for (const w of truck.wheels) w.rotation.x -= (S.speed * dt) / 0.55;
@@ -859,13 +882,20 @@ function setMode(m) {
 }
 
 function onPhaseChange(from, to) {
+  function onPhaseChange(from, to) {
   if (to === 'waiting' || to === 'warehouse') setMode('warehouse');
   if (to === 'driving' || ((to === 'shop' || to === 'gameover') && from === null)) {
     setMode('drive');
     disp.dist = S.dist;
     disp.truckX = S.truckX;
+    localTruckX = S.truckX || 0; // ZMENA
     clearThreats();
     scatterScenery(-S.dist);
+  }
+  if (to === 'warehouse' && S && S.players[myId]) {
+    // ZMENA: Načítaj lokálny bod
+    localPlayer.x = S.players[myId].x; 
+    localPlayer.z = S.players[myId].z;
   }
   if (to === 'driving') {
     localShotAt = -1e9;
@@ -876,7 +906,7 @@ function onPhaseChange(from, to) {
   if (to === 'warehouse') banner(`📦 Jazda #${S.trip} — nalož kamión!`, 1600);
   if (from === 'driving' && isLocked()) document.exitPointerLock();
   if (to === 'shop') shopKey = '';
-}
+}}
 
 function updateOverlays() {
   const ph = S.phase;
@@ -1060,15 +1090,25 @@ addEventListener('blur', () => keys.clear());
 let lastSentInput = '';
 function pollInput() {
   if (!myId || !ws || ws.readyState !== WebSocket.OPEN) return;
-  const k = (c) => keys.has(c);
-  const left = k('KeyA') || k('ArrowLeft');
-  const right = k('KeyD') || k('ArrowRight');
-  const up = k('KeyW') || k('ArrowUp');
-  const down = k('KeyS') || k('ArrowDown');
-  const msg = { type: 'input', role: myRole, warehouseMove: { x: (right ? 1 : 0) - (left ? 1 : 0), z: (down ? 1 : 0) - (up ? 1 : 0) } };
-  if (myRole === 'driver') msg.keys = { left, right, horn: k('Space') };
+  const k_key = (c) => keys.has(c);
+  const msg = { type: 'input', role: myRole };
+  
+  if (S && S.phase === 'warehouse') {
+    // Odosielame exaktnú lokálnu pozíciu
+    msg.pos = { x: Math.round(localPlayer.x * 1000) / 1000, z: Math.round(localPlayer.z * 1000) / 1000 };
+  }
+  if (myRole === 'driver') {
+    msg.keys = { horn: k_key('Space') };
+    if (S && S.phase === 'driving') {
+      msg.truckX = Math.round(localTruckX * 1000) / 1000;
+    }
+  }
+  
   const s = JSON.stringify(msg);
-  if (s !== lastSentInput) { ws.send(s); lastSentInput = s; }   // len keď sa input zmení
+  if (s !== lastSentInput) { 
+    ws.send(s); 
+    lastSentInput = s; 
+  }
 }
 
 document.addEventListener('mousemove', (e) => {
