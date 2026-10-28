@@ -65,6 +65,22 @@
   .card button { margin-top:auto; background:var(--gold); color:#1A1A2E; border:0; border-radius:10px; padding:10px; font:inherit;
     font-weight:800; cursor:pointer; min-height:44px; }
   .cash { font-size:32px; font-weight:900; color:var(--gold); }
+  .menu-btns { display:flex; flex-direction:column; gap:12px; width:min(280px, 90vw); }
+  button.big.alt { background:#24243e; box-shadow:0 5px 0 #0d0d1a; }
+  button.big.alt:active { box-shadow:0 2px 0 #0d0d1a; }
+  button.link { background:none; border:0; color:#fff; opacity:.75; font:inherit; font-size:15px; cursor:pointer; min-height:44px; }
+  button.link:hover { opacity:1; }
+  .overlay p.credits { position:absolute; bottom:16px; left:0; right:0; margin:0 auto; }
+  #ovInfo { z-index:30; }
+  .info { max-width:640px; width:100%; max-height:72vh; overflow:auto; text-align:left; background:#24243e; border-radius:14px; padding:18px 22px; line-height:1.5; }
+  .info h3 { margin:0 0 8px; color:var(--accent); font-size:24px; }
+  .info h4 { margin:14px 0 4px; color:var(--gold); }
+  .info table { border-collapse:collapse; width:100%; font-size:14px; }
+  .info td, .info th { padding:6px 8px; border-bottom:1px solid rgba(255,255,255,.1); vertical-align:top; text-align:left; }
+  .info ul { margin:4px 0; padding-left:20px; }
+  #btnMenu { position:fixed; right:14px; bottom:14px; z-index:5; width:48px; height:48px; border:0; border-radius:12px;
+    background:rgba(26,26,46,.86); color:#fff; font-size:22px; cursor:pointer; }
+  #btnMenu.hud.show { display:block; }
   .tag { display:inline-block; padding:1px 9px; border-radius:10px; font-weight:800; color:#1A1A2E; font-size:13px; }
 </style>
 </head>
@@ -91,13 +107,37 @@
 <div id="ovConnect" class="overlay show">
   <h1>FRIENDSLOP<br>TRUCK</h1>
   <p class="muted">co-op · šofér + strelec · LAN / Hamachi</p>
-  <div class="row" style="margin-top:14px">
-    <input id="ipInput" spellcheck="false" placeholder="25.x.x.x">
-    <button id="btnConnect" class="big">Pripojiť</button>
+  <div id="viewMain" class="menu-btns" style="margin-top:14px">
+    <button class="big" data-view="play">▶ Hrať</button>
+    <button class="big alt" data-info="help">🎮 Ako hrať</button>
+    <button class="big alt" data-info="about">ℹ️ O hre</button>
   </div>
-  <p id="connMsg" style="min-height:22px"></p>
-  <p class="muted">Host (kto spustil server.js) nechá <b>localhost</b>. Kamarát napíše Hamachi IP hosta (25.x.x.x).</p>
+  <div id="viewPlay" style="display:none;flex-direction:column;align-items:center;gap:12px;margin-top:14px">
+    <div class="row">
+      <input id="ipInput" spellcheck="false" placeholder="25.x.x.x">
+      <button id="btnConnect" class="big">Pripojiť</button>
+    </div>
+    <p id="connMsg" style="min-height:22px"></p>
+    <p class="muted">Host (kto spustil server.js) nechá <b>localhost</b>. Kamarát napíše Hamachi IP hosta (25.x.x.x).</p>
+    <button class="link" data-view="main">← Späť do menu</button>
+  </div>
+  <p class="muted credits">nápad mitkos · kód dodo &amp; Dejvo</p>
 </div>
+<div id="ovMenu" class="overlay">
+  <h2>☰ Menu</h2>
+  <p class="muted">Hra beží ďalej — kamarát na teba nečaká 😉</p>
+  <div class="menu-btns">
+    <button class="big" id="btnResume">▶ Pokračovať</button>
+    <button class="big alt" data-info="help">🎮 Ako hrať</button>
+    <button class="big alt" data-info="about">ℹ️ O hre</button>
+    <button class="big alt" id="btnLeave">🚪 Odpojiť sa</button>
+  </div>
+</div>
+<div id="ovInfo" class="overlay">
+  <div id="infoBody" class="info"></div>
+  <button class="big" id="btnInfoBack">← Späť</button>
+</div>
+<button id="btnMenu" class="hud" title="Menu (Esc)">☰</button>
 <div id="ovWaiting" class="overlay">
   <h2 id="waitTitle" class="dots">Čakám na hráča 2</h2>
   <p id="waitSub" class="muted"></p>
@@ -184,6 +224,7 @@ let myRole = '';
 let reconnectTries = 0;
 let reconnectTimer = 0;
 let gotFull = false;
+let userLeft = false;          // hráč sa odpojil cez menu → bez reconnectu
 let S = null;                 // posledný tick zo servera
 let lastTickAt = 0;
 
@@ -208,6 +249,17 @@ function connect(host) {
     ws = null;
     myId = 0;
     if (gotFull) return;
+    if (userLeft) {
+      userLeft = false;
+      S = null;
+      setMode('warehouse');
+      clearThreats();
+      for (const ov of document.querySelectorAll('.overlay.show')) ov.classList.remove('show');
+      $('ovConnect').classList.add('show');
+      showView('main');
+      setConnMsg('');
+      return;
+    }
     if (reconnectTries >= RECONNECT_MAX) {
       reconnectTries = 0;
       showConnect('❌ Nepodarilo sa pripojiť. Beží server.js? Je IP správna a ste v rovnakej Hamachi sieti?');
@@ -428,6 +480,9 @@ function syncPlayers() {
     if (!o) {
       o = makePlayerMesh(PLAYER_COLORS[id]);
       o.g.position.set(p.x, 0, p.z);
+      o.tx = p.x;                     // inak by vlastná postavička začala na (0, 0)
+      o.tz = p.z;
+      if (id === myId) { localPlayer.x = p.x; localPlayer.z = p.z; }
       playerMeshes.set(id, o);
     }
     // ZMENA: Iba druhého hráča updatujeme podľa servera. Seba si riešime lokálne.
@@ -707,6 +762,13 @@ function updateDriving(dt, now) {
     localTruckX = S.truckX;
   }
   
+  // vzdialenosť: posledný tick + extrapolácia rýchlosťou
+  let target = S.dist + (live ? S.speed * Math.min((now - lastTickAt) / 1000, 0.12) : 0);
+  target = Math.min(target, TRIP_DIST);
+  if (Math.abs(target - disp.dist) > 15) disp.dist = target;
+  else disp.dist += (target - disp.dist) * (1 - Math.exp(-25 * dt));
+  const tz = -disp.dist;
+
   // Pre výpočet použijeme lokálny localTruckX namiesto serverového S.truckX
   const steerDiff = localTruckX - disp.truckX;
   disp.truckX += steerDiff * (1 - Math.exp(-LERP * dt));
@@ -882,7 +944,6 @@ function setMode(m) {
 }
 
 function onPhaseChange(from, to) {
-  function onPhaseChange(from, to) {
   if (to === 'waiting' || to === 'warehouse') setMode('warehouse');
   if (to === 'driving' || ((to === 'shop' || to === 'gameover') && from === null)) {
     setMode('drive');
@@ -892,10 +953,12 @@ function onPhaseChange(from, to) {
     clearThreats();
     scatterScenery(-S.dist);
   }
-  if (to === 'warehouse' && S && S.players[myId]) {
-    // ZMENA: Načítaj lokálny bod
-    localPlayer.x = S.players[myId].x; 
+  if (to === 'warehouse' && S.players[myId]) {
+    // nové kolo: server dal hráčov na štart, lokálna pozícia musí skočiť tam tiež
+    localPlayer.x = S.players[myId].x;
     localPlayer.z = S.players[myId].z;
+    const own = playerMeshes.get(myId);
+    if (own) { own.tx = localPlayer.x; own.tz = localPlayer.z; }
   }
   if (to === 'driving') {
     localShotAt = -1e9;
@@ -906,7 +969,7 @@ function onPhaseChange(from, to) {
   if (to === 'warehouse') banner(`📦 Jazda #${S.trip} — nalož kamión!`, 1600);
   if (from === 'driving' && isLocked()) document.exitPointerLock();
   if (to === 'shop') shopKey = '';
-}}
+}
 
 function updateOverlays() {
   const ph = S.phase;
@@ -939,6 +1002,8 @@ function updateOverlays() {
 
 function showConnect(msg) {
   $('ovConnect').classList.add('show');
+  $('ovMenu').classList.remove('show');
+  showView('play');
   setConnMsg(msg);
   if (isLocked()) document.exitPointerLock();
 }
@@ -953,6 +1018,70 @@ function userConnect() {
   connect(h);
 }
 $('btnConnect').addEventListener('click', userConnect);
+
+// ── MENU, AKO HRAŤ, O HRE ──
+const INFO = {
+  help: `
+    <h3>🎮 Ako hrať</h3>
+    <p>Hrajú dvaja. Prvý pripojený je <b style="color:${PAL.PLAYER1}">Šofér</b>, druhý <b style="color:${PAL.PLAYER2}">Strelec</b>.</p>
+    <h4>1 · Sklad</h4>
+    <p>Choďte ku škatuliam na regáloch — zoberú sa samé. Odneste ich do <b style="color:${PAL.GOLD}">žltej zóny</b> pri kamióne.
+    Keď je naložené všetko, vyráža sa.</p>
+    <h4>2 · Diaľnica</h4>
+    <p>600 m do cieľa. Cez cestu skáče zver a z krajnice sa vrhajú bandity. Každý náraz zničí časť nákladu —
+    keď je náklad na nule, je koniec.</p>
+    <h4>3 · Garáž</h4>
+    <p>Za doručený náklad dostanete peniaze. Šofér kupuje upgrady: motor, pancier, trúbu a väčší sklad.</p>
+    <h4>Ovládanie</h4>
+    <table>
+      <tr><th></th><th>Sklad</th><th>Diaľnica</th></tr>
+      <tr><td><b>Šofér</b></td><td>WASD / šípky</td><td>A/D alebo ←/→ riadenie<br>SPACE trúba (omráči hrozby)</td></tr>
+      <tr><td><b>Strelec</b></td><td>WASD / šípky</td><td>myš mieri, ľavé tlačidlo strieľa<br>ESC uvoľní myš</td></tr>
+    </table>
+    <p class="muted" style="margin-top:10px">Tip: šofér trúbi, strelec strieľa — omráčená hrozba stojí na mieste a ľahko sa trafí.
+    Menu otvoríš tlačidlom ☰ alebo klávesom Esc.</p>`,
+  about: `
+    <h3>ℹ️ O hre</h3>
+    <p><b>Friendslop Truck</b> je kooperatívna low-poly hra pre dvoch kamarátov. Jeden šoféruje kamión,
+    druhý ho strieľaním bráni na diaľnici plnej zveri a banditov. Spolu nakladáte, doručujete a vylepšujete kamión.</p>
+    <p>Hrá sa cez LAN alebo Hamachi: jeden spustí server, druhý sa pripojí na jeho IP.</p>
+    <h4>Tím</h4>
+    <ul>
+      <li>💡 Nápad: <b>mitkos</b></li>
+      <li>💻 Kód: <b>dodo</b> a <b>Dejvo</b></li>
+    </ul>
+    <p class="muted" style="margin-top:10px">Three.js + Node.js · 2026</p>`,
+};
+function showView(v) {
+  $('viewMain').style.display = v === 'main' ? 'flex' : 'none';
+  $('viewPlay').style.display = v === 'play' ? 'flex' : 'none';
+  if (v === 'play') setTimeout(() => $('ipInput').focus(), 0);
+}
+function openInfo(key) {
+  $('infoBody').innerHTML = INFO[key];
+  $('ovInfo').classList.add('show');
+}
+function toggleGameMenu(open) {
+  if (!S || !myId) return;
+  const ov = $('ovMenu');
+  const show = open === undefined ? !ov.classList.contains('show') : open;
+  ov.classList.toggle('show', show);
+  if (show) { keys.clear(); if (isLocked()) document.exitPointerLock(); }
+}
+document.addEventListener('click', (e) => {
+  const v = e.target.closest('[data-view]');
+  if (v) { audio(); showView(v.dataset.view); }
+  const i = e.target.closest('[data-info]');
+  if (i) openInfo(i.dataset.info);
+});
+$('btnInfoBack').addEventListener('click', () => $('ovInfo').classList.remove('show'));
+$('btnMenu').addEventListener('click', () => toggleGameMenu(true));
+$('btnResume').addEventListener('click', () => toggleGameMenu(false));
+$('btnLeave').addEventListener('click', () => {
+  userLeft = true;
+  $('ovMenu').classList.remove('show');
+  if (ws) ws.close();
+});
 $('ipInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') userConnect(); });
 
 /* ═══════════════════════════════════════════════════════════════
@@ -966,7 +1095,7 @@ function tag(text, color) { return `<span class="tag" style="background:${color}
 let hudTimer = 0;
 function updateHUD(dt) {
   const on = !!(S && myId);
-  for (const id of ['hudLeft', 'hudRight', 'hint']) $(id).classList.toggle('show', on);
+  for (const id of ['hudLeft', 'hudRight', 'hint', 'btnMenu']) $(id).classList.toggle('show', on);
   $('progress').style.display = on && S.phase === 'driving' ? 'block' : 'none';
   if (!on) return;
   if (S.phase === 'driving') {
@@ -1081,6 +1210,13 @@ const GAME_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'];
 addEventListener('keydown', (e) => {
   if (e.target && e.target.tagName === 'INPUT') return;
   audio();
+  if (e.code === 'Escape') {
+    // Esc počas zamknutej myši ju len uvoľní (prehliadač); inak zavrie okno / prepne menu
+    if ($('ovInfo').classList.contains('show')) $('ovInfo').classList.remove('show');
+    else if (!isLocked()) toggleGameMenu();
+    return;
+  }
+  if ($('ovMenu').classList.contains('show')) return;   // v menu sa nejazdí
   keys.add(e.code);
   if (GAME_KEYS.includes(e.code)) e.preventDefault();
 });
@@ -1135,13 +1271,19 @@ renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
    m. RAF LOOP
    ═══════════════════════════════════════════════════════════════ */
 let lastFrame = performance.now();
+let loopErrorShown = false;
 function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min((now - lastFrame) / 1000, 0.05);
   lastFrame = now;
   if (S) {
-    if (mode === 'warehouse') updateWarehouse(dt, now);
-    else updateDriving(dt, now);
+    // chyba v jednom snímku nesmie zastaviť celú hru (input, HUD a render bežia ďalej)
+    try {
+      if (mode === 'warehouse') updateWarehouse(dt, now);
+      else updateDriving(dt, now);
+    } catch (e) {
+      if (!loopErrorShown) { loopErrorShown = true; console.error('[frame]', e); toast('⚠️ Chyba v hre — pozri konzolu (F12)'); }
+    }
   } else {
     // pred pripojením: kamera pomaly krúži nad skladom
     const a = now * 0.00012;
@@ -1157,7 +1299,7 @@ function loop(now) {
 let savedHost = '';
 try { savedHost = localStorage.getItem('fst-host') || ''; } catch { /* ignore */ }
 $('ipInput').value = qsHost || savedHost || HOST_IP;
-if (qsHost) connect(qsHost);
+if (qsHost) { showView('play'); connect(qsHost); }
 requestAnimationFrame(loop);
 </script>
 </body>

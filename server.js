@@ -176,6 +176,7 @@ function startWarehouse() {
     .map((p, i) => ({ id: i, x: p.x, z: p.z, loaded: false, carriedBy: null }));
   s.players[1].x = -2; s.players[1].z = 3;
   s.players[2].x = 2; s.players[2].z = 3;
+  for (const id of [1, 2]) { inputs[id].absX = undefined; inputs[id].absZ = undefined; }  // stará pozícia z minulého kola
   s.threats = [];
   s.cargo = 1; s.fuel = 1; s.dist = 0; s.truckX = 0;
   console.log(`[game] Jazda #${s.trip}: sklad, ${s.totalBoxes} škatúľ`);
@@ -186,6 +187,7 @@ function startDriving() {
   s.phase = 'driving';
   s.completeTimer = -1;
   s.truckX = 0; s.dist = 0; s.cargo = 1; s.fuel = 1;
+  inputs[1].absTruckX = undefined;                  // stará poloha kamiónu z minulej jazdy
   s.threats = [];
   s.spawnTimer = 2.5;
   s.gunCooldown = 0; s.hornCooldown = 0;
@@ -334,9 +336,13 @@ function warehouseTick(dt) {
     if (!p.connected) continue;
     const inp = inputs[id];
     
-    // ZMENA: Aplikujeme klientskú pozíciu postavičky (s clamp ochranou voči stenám)
-    if (inp.absX !== undefined) p.x = clamp(inp.absX, WH.minX, WH.maxX);
-    if (inp.absZ !== undefined) p.z = clamp(inp.absZ, WH.minZ, WH.maxZ);
+    // Klient posiela svoju pozíciu (plynulý pohyb u neho). Server ju preberá,
+    // ale max. rýchlosťou chôdze (+50 % rezerva na sieť) — žiadne teleporty.
+    if (inp.absX !== undefined) {
+      const maxStep = PLAYER_SPEED * 1.5 * dt;
+      p.x += clamp(clamp(inp.absX, WH.minX, WH.maxX) - p.x, -maxStep, maxStep);
+      p.z += clamp(clamp(inp.absZ, WH.minZ, WH.maxZ) - p.z, -maxStep, maxStep);
+    }
 
     const carried = s.boxes.find((b) => b.carriedBy === id);
     if (carried) {
@@ -376,9 +382,10 @@ function drivingTick(dt) {
   const s = state;
   const inp = inputs[1];
   
-  // ZMENA: Klient priamo určuje pohyb kamiónu
+  // Šofér posiela polohu kamiónu; server ju preberá max. rýchlosťou riadenia (+50 %).
   if (inp.absTruckX !== undefined) {
-    s.truckX = clamp(inp.absTruckX, -TRUCK_CLAMP, TRUCK_CLAMP);
+    const maxStep = STEER_SPEED * 1.5 * dt;
+    s.truckX += clamp(clamp(inp.absTruckX, -TRUCK_CLAMP, TRUCK_CLAMP) - s.truckX, -maxStep, maxStep);
   }
   
   s.dist = Math.min(TRIP_DIST, s.dist + truckSpeed() * dt);
@@ -435,12 +442,12 @@ function handleMessage(id, msg) {
   if (msg.type === 'input') {
     const inp = inputs[id];
     
-    // ZMENA: Ak klient poslal presnú pozíciu, preberieme ju
-    if (msg.pos) {
+    // Klient poslal svoju pozíciu — berieme len konečné čísla (NaN / text by rozbil stav)
+    if (msg.pos && typeof msg.pos === 'object' && Number.isFinite(msg.pos.x) && Number.isFinite(msg.pos.z)) {
       inp.absX = msg.pos.x;
       inp.absZ = msg.pos.z;
     }
-    if (msg.truckX !== undefined) {
+    if (id === 1 && Number.isFinite(msg.truckX)) {
       inp.absTruckX = msg.truckX;
     }
 
@@ -487,7 +494,7 @@ wss.on('connection', (ws, req) => {
     if (sockets[id] !== ws) return;
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
-    handleMessage(id, msg);
+    try { handleMessage(id, msg); } catch (e) { console.error('[msg]', e); }  // zlá správa nesmie zhodiť server
   });
 
   ws.on('close', () => {
