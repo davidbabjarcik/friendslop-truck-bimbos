@@ -228,7 +228,6 @@ let gotFull = false;
 let userLeft = false;          // hráč sa odpojil cez menu → bez reconnectu
 let S = null;                 // posledný tick zo servera
 let lastTickAt = 0;
-let canSend = true;
 function connect(host) {
   clearTimeout(reconnectTimer);
   hostIp = host;
@@ -294,7 +293,6 @@ function handleMsg(m) {
 }
 
 function onTick(m) {
-  canSend = true; // ZMENA: Server poslal odpoveď, môžeme znova poslať input
   const prev = S;
   S = m;
   lastTickAt = performance.now();
@@ -1229,27 +1227,31 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => { keys.delete(e.code); });
 addEventListener('blur', () => keys.clear());
 
+let lastSendTime = 0;
 function pollInput() {
   if (!myId || !ws || ws.readyState !== WebSocket.OPEN) return;
   
-  // ZMENA: Odošleme dáta len vtedy, ak máme povolenie (čiže server potvrdil predošlý stav)
-  if (!canSend) return;
-  canSend = false;
+  // Pevný limit siete: Odosielame dáta max 10-krát za sekundu (každých 100 ms)
+  const now = performance.now();
+  if (now - lastSendTime < 100) return;
+  lastSendTime = now;
 
   const k_key = (c) => keys.has(c);
   const msg = { type: 'input', role: myRole };
   
   if (S && S.phase === 'warehouse') {
-    msg.pos = { x: Math.round(localPlayer.x * 1000) / 1000, z: Math.round(localPlayer.z * 1000) / 1000 };
+    // Zaokrúhlenie na 2 desatinné miesta šetrí veľkosť paketu
+    msg.pos = { x: Math.round(localPlayer.x * 100) / 100, z: Math.round(localPlayer.z * 100) / 100 };
   }
   if (myRole === 'driver') {
     msg.keys = { horn: k_key('Space') };
     if (S && S.phase === 'driving') {
-      msg.truckX = Math.round(localTruckX * 1000) / 1000;
+      msg.truckX = Math.round(localTruckX * 100) / 100;
     }
   }
   
   const s = JSON.stringify(msg);
+  // Odošle sa len vtedy, ak sa hráč skutočne hýbe alebo niečo stlačil
   if (s !== lastSentInput) { 
     ws.send(s); 
     lastSentInput = s; 
