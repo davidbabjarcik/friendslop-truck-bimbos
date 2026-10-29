@@ -74,6 +74,23 @@ Netreba nič buildovať: stačí Node.js na serveri a prehliadač.
 > Server beží na porte **3000** (`PORT` hore v `server.js`). Ak sa kamarát nevie pripojiť, povoľ Node.js
 > vo **Windows Firewalle** (aspoň pre súkromné siete).
 
+> [!WARNING]
+> **Neklikaj do čierneho okna so serverom.** Keď v ňom Windows označí text, celý server sa zastaví a obom hráčom
+> to zamrzne, kým nestlačíš `Esc` alebo `Enter`.
+
+### 📶 Ping a lag
+
+Ping vidíš v hre vpravo hore (📶) a ping kamaráta vľavo hore. Zelená je < 100 ms, žltá < 250 ms, červená je viac.
+Server každých 5 s vypíše do konzoly, ako to ide:
+
+```
+[net] P1 ping 1 ms · 16 tick/s · 6.4 KB/s  |  P2 ping 157 ms · 12 tick/s · 4.8 KB/s
+```
+
+Keď má niekto pomalé spojenie, server mu automaticky posiela stav menej často (najmenej 5× za sekundu), aby sa
+dáta nehromadili. Ak má kamarát v Hamachi pri tvojom mene **žltú/modrú bodku** namiesto zelenej, spojenie ide cez
+Hamachi relay. Ten býva pomalý, takže pomôže reštart Hamachi alebo povolenie Hamachi vo firewalle.
+
 ## ⌨️ Ovládanie
 
 | | 📦 Sklad | 🛣️ Diaľnica |
@@ -121,19 +138,48 @@ Ceny: 💰100 → 💰200 → 💰350. Ak niekto vypadne, hra sa pozastaví a **
 ## 🧩 Ako to funguje
 
 ```
- client.html (Šofér)  ──input──▶               ◀──input──  client.html (Strelec)
-                                 server.js
-                      ◀──stav──  20× za sek.   ──stav──▶
+ client.html (Šofér)  ──input──▶                 ◀──input──  client.html (Strelec)
+                                  server.js
+                      ◀──stav──  5–20× za sek.   ──stav──▶
+                                (podľa pingu)
 ```
 
 - **`server.js`** — Node.js + [`ws`](https://github.com/websockets/ws). Rozhoduje o všetkom: hrozby, zásahy, náklad, peniaze.
   Klienti posielajú len input a svoju polohu. Server ju preberá najviac rýchlosťou chôdze, takže sa nedá teleportovať.
+  Každých 0,5 s meria ping každého hráča a podľa neho mu posiela stav 5–20× za sekundu.
 - **`client.html`** — jeden súbor, [Three.js](https://threejs.org) r168 z CDN. Vykresľuje hru, vlastný pohyb počíta
   plynulo každý snímok.
 
 ## 📝 Zmeny
 
 <details open>
+<summary><b>v1.3</b> — oprava 5000 ms lagu cez Hamachi</summary>
+
+**Prečo mali obaja hráči ~5000 ms:** boli to tri veci naraz.
+
+1. **Server posielal stav naslepo.** Keď pomalé spojenie (Hamachi relay) nestíhalo, dáta sa hromadili vo fronte
+   a každá ďalšia správa prišla ešte neskôr. Oneskorenie rástlo každú sekundu, až kým server hráča neodpojil.
+   Zmerané so simulovaným pomalým spojením (10 KB/s): **0,7 s → 1,8 s → 3 s → 4,2 s → 5,8 s → odpojenie**.
+   Zníženie na 10 tickov/s (v1.1.x) to len spomalilo, fronta rástla aj tak.
+2. **V `client.html` chýbal `let lastSentInput`** (zmazal sa pri obmedzení posielania inputu). Hneď po pripojení
+   každý snímok spadol na `lastSentInput is not defined`: obraz zamrzol a pohyb sa neposielal. Vyzeralo to ako obrovský lag.
+3. **Zo servera zmizol `ws.on('error')`.** Jedna sieťová chyba (napr. vypadnutý Hamachi) by zhodila celý server.
+
+**Opravené:**
+- Server meria **ping** každého hráča (každých 0,5 s). Keď stúpne nad 250 ms, posiela mu stav menej často
+  (20 → 10 → 7 → 5× za sekundu); keď klesne, zase častejšie. Keď sa neodoslané dáta hromadia, tick vynechá.
+  Udalosti (zásahy, zvuky) sa pritom nestratia, prídu v ďalšom ticku.
+  Na tom istom pomalom spojení je teraz oneskorenie **0,1–0,3 s stabilne** (90 s test, sklad aj jazda).
+- **Menšie dáta:** hrozby, škatule a hráči idú ako polia, peniaze a upgrady len keď sa zmenia (jeden tick má ~0,4 KB namiesto ~0,8 KB).
+- **Ping v hre:** 📶 vpravo hore (tvoj) a vľavo hore (kamaráta). Server ho každých 5 s vypíše do konzoly.
+- Vrátené `let lastSentInput`, `ws.on('error')`, `wss.on('error')` a výpis IP adries pri štarte (aj Hamachi 25.x.x.x).
+- Server zase simuluje 20× za sekundu. Limit `MAX_DT` je 0,1: Windows časovač beží len ~16×/s a s limitom 0,05
+  by hra na serveri išla na 80 % rýchlosti a klient by ju stále dobiehal (trhanie).
+- Input sa posiela max. 20× za sekundu (bolo 10×) a len keď sa zmení.
+- Ponechané z Dominikových úprav: škatule sa posielajú len v sklade, plynulejší pohyb druhého hráča, 2 desatinné miesta.
+</details>
+
+<details>
 <summary><b>v1.2</b> — oprava pádu, menu, logo</summary>
 
 **Prečo hra padala:** v úprave „pls fixv1“ sa v `client.html` omylom rozbili dve veci:

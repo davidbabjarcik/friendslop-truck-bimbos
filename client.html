@@ -228,6 +228,9 @@ let gotFull = false;
 let userLeft = false;          // hráč sa odpojil cez menu → bez reconnectu
 let S = null;                 // posledný tick zo servera
 let lastTickAt = 0;
+const meta = {};              // peniaze, upgrady… — server ich posiela len keď sa zmenia
+let lastSentInput = '';       // posledný odoslaný input (posielame len zmeny)
+
 function connect(host) {
   clearTimeout(reconnectTimer);
   hostIp = host;
@@ -287,9 +290,22 @@ function handleMsg(m) {
   } else if (m.type === 'full') {
     gotFull = true;
     showConnect('Server je plný (2/2 hráči).');
+  } else if (m.type === 'ping') {
+    // hneď vrátime — server z toho meria ping a prispôsobí, ako často nám posiela stav
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'pong', t: m.t }));
   } else if (m.type === 'tick') {
-    onTick(m);
+    onTick(decodeTick(m));
   }
+}
+
+// Server posiela kompaktné polia (menej dát cez Hamachi) — tu ich rozbalíme na objekty.
+function decodeTick(m) {
+  if (m.meta) Object.assign(meta, m.meta);
+  const pl = (a) => ({ x: a[0], z: a[1], connected: !!a[2] });
+  m.players = { 1: pl(m.players[1]), 2: pl(m.players[2]) };
+  m.threats = m.threats.map((a) => ({ id: a[0], type: a[1] ? 'bandit' : 'deer', x: a[2], z: a[3], dir: a[4], stunned: !!a[5] }));
+  m.boxes = m.boxes.map((a) => ({ id: a[0], x: a[1], z: a[2], loaded: !!a[3], carriedBy: a[4] || null }));
+  return Object.assign({}, meta, m);
 }
 
 function onTick(m) {
@@ -767,7 +783,8 @@ function updateDriving(dt, now) {
   }
   
   // vzdialenosť: posledný tick + extrapolácia rýchlosťou
-  let target = S.dist + (live ? S.speed * Math.min((now - lastTickAt) / 1000, 0.12) : 0);
+  // pri pomalom spojení chodí tick aj len 5× za sekundu → dopočítame až 0,35 s dopredu
+  let target = S.dist + (live ? S.speed * Math.min((now - lastTickAt) / 1000, 0.35) : 0);
   target = Math.min(target, TRIP_DIST);
   if (Math.abs(target - disp.dist) > 15) disp.dist = target;
   else disp.dist += (target - disp.dist) * (1 - Math.exp(-25 * dt));
@@ -1091,6 +1108,12 @@ $('ipInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') userCon
 /* ═══════════════════════════════════════════════════════════════
    k. HUD HELPERS (+ toast, banner, zvuky)
    ═══════════════════════════════════════════════════════════════ */
+function pingText(ms) {
+  if (!ms) return '<span style="opacity:.6">ping …</span>';
+  const color = ms < 100 ? PAL.GROUND : ms < 250 ? PAL.GOLD : PAL.THREAT;
+  return `<b style="color:${color}">${ms} ms</b>`;
+}
+
 function bar(frac, color) {
   return `<div class="bar"><i style="width:${clamp(frac, 0, 1) * 100}%;background:${color}"></i></div>`;
 }
@@ -1114,7 +1137,7 @@ function updateHUD(dt) {
   const other = myId === 1 ? 2 : 1;
   const otherOn = S.players[other].connected;
   let left = `<div class="role" style="color:${PLAYER_COLORS[myId]}">P${myId} · ${ROLE_NAME[myRole]}</div>`;
-  left += `<div class="muted">${ROLE_PLAIN[other]}: ${otherOn ? 'online ✅' : 'offline ❌'}</div>`;
+  left += `<div class="muted">${ROLE_PLAIN[other]}: ${otherOn ? `online ✅ · ${pingText(S.ping && S.ping[other])}` : 'offline ❌'}</div>`;
   let hint = '';
 
   if (S.phase === 'warehouse') {
@@ -1147,7 +1170,8 @@ function updateHUD(dt) {
     hint = 'Koniec hry';
   }
   $('hudLeft').innerHTML = left;
-  $('hudRight').innerHTML = `<div class="cash" style="font-size:24px">💰 ${S.cash}</div><div class="muted">Jazda #${S.trip}</div>`;
+  $('hudRight').innerHTML = `<div class="cash" style="font-size:24px">💰 ${S.cash}</div><div class="muted">Jazda #${S.trip}</div>`
+    + `<div class="muted" title="Ping k serveru">📶 ${pingText(S.ping && S.ping[myId])}</div>`;
   $('hint').textContent = hint;
 }
 
@@ -1231,9 +1255,9 @@ let lastSendTime = 0;
 function pollInput() {
   if (!myId || !ws || ws.readyState !== WebSocket.OPEN) return;
   
-  // Pevný limit siete: Odosielame dáta max 10-krát za sekundu (každých 100 ms)
+  // Limit siete: input posielame max. 20× za sekundu (každých 50 ms) a len keď sa zmení
   const now = performance.now();
-  if (now - lastSendTime < 100) return;
+  if (now - lastSendTime < 50) return;
   lastSendTime = now;
 
   const k_key = (c) => keys.has(c);

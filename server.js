@@ -20,16 +20,24 @@
     4. Počkaj na "Pripojený ako Strelec 🎯"
  ═══════════════════════════════════════════════════════════════════
 */
-'use strict';
 const { WebSocketServer, WebSocket } = require('ws');
 const os = require('os');
 
 // ─── 1. KONŠTANTY ─────────────────────────────────────────────────
 const PORT = 3000;
-const TICK_MS = 100;                      // ZMENA: Znížené z 50 na 100 (10x za sekundu = polovičná záťaž siete)
-const MAX_DT = 0.1;
-const RECONNECT_TIMEOUT = 10;
-const HEARTBEAT_MS = 5000;
+const TICK_MS = 50;                       // simulácia 20× za sekundu
+const MAX_DT = 0.1;                       // dt cap (Windows časovač beží ~16×/s, nie 20× — 0.05 by hru spomalil)
+const RECONNECT_TIMEOUT = 10;             // s, potom gameover
+const HEARTBEAT_MS = 5000;                // detekcia mŕtvych spojení (Hamachi výpadky)
+
+// Sieť: každému hráčovi posielame stav len tak často, ako jeho spojenie stíha.
+// Inak sa dáta hromadia vo fronte a oneskorenie narastie na sekundy (pomalý Hamachi relay).
+const PING_MS = 500;                      // ako často meriame ping
+const SLOW_PING = 250;                    // nad týmto pingom posielame menej často
+const GOOD_PING = 150;                    // pod týmto pingom môžeme zase častejšie
+const MAX_SEND_EVERY = 4;                 // najpomalšie: každý 4. tick = 5× za sekundu
+const MAX_BUFFERED = 8 * 1024;            // keď sa neodoslané dáta hromadia, tick vynecháme
+const NET_LOG_MS = 5000;                  // sieťová štatistika do konzoly
 const COLORS = { 1: '#FF6B35', 2: '#4FC3F7' };
 const ROLES = { 1: 'driver', 2: 'gunner' };
 
@@ -119,13 +127,21 @@ const inputs = { 1: blankInput(), 2: blankInput() };
 let events = [];
 let shotHits = [];
 
-// ZMENA: Sieťový monitor pre konzolu
-const netStats = { rx1: 0, rx2: 0, txBytes: 0 };
-setInterval(() => {
-  const kbps = (netStats.txBytes / 1024).toFixed(2);
-  console.log(`[NET LOG] Prijaté: Hráč1 (${netStats.rx1}x), Hráč2 (${netStats.rx2}x) | Server odosiela: ${kbps} KB/s`);
-  netStats.rx1 = 0; netStats.rx2 = 0; netStats.txBytes = 0;
-}, 1000);
+// Sieťový stav každého hráča (ping, ako často mu posielame, čo ešte nedostal)
+const links = { 1: blankLink(), 2: blankLink() };
+
+function blankLink() {
+  return {
+    ping: 0,            // vyhladený ping v ms
+    sendEvery: 1,       // posielame každý N-tý tick
+    goodPongs: 0,       // koľko rýchlych pongov za sebou (na zrýchlenie)
+    tickCount: 0,
+    events: [],         // udalosti, ktoré ešte nedostal (keď tick vynecháme)
+    hits: [],
+    meta: '',           // posledné poslané "meta" (peniaze, upgrady…) — posiela sa len pri zmene
+    sent: 0, bytes: 0, rx: 0, skipped: 0,   // štatistika pre konzolu
+  };
+}
 
 function blankInput() {
   return { left: false, right: false, horn: false, moveX: 0, moveZ: 0, aspect: 16 / 9 };
@@ -135,6 +151,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rand = (a, b) => a + Math.random() * (b - a);
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 const r3 = (v) => Math.round(v * 1000) / 1000;
+const r2 = (v) => Math.round(v * 100) / 100;
 
 function shuffle(a) {
   for (let i = a.length - 1; i > 0; i--) {
@@ -448,26 +465,26 @@ wss.on('connection', (ws, req) => {
   }
   sockets[id] = ws;
   inputs[id] = blankInput();
+  links[id] = blankLink();
   state.players[id].connected = true;
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
+  // Bez tohto by jedna sieťová chyba (napr. ECONNRESET cez Hamachi) zhodila celý server
+  ws.on('error', (e) => console.log(`[net] Hráč ${id}: chyba spojenia (${e.code || e.message})`));
 
   send(ws, { type: 'init', id, role: ROLES[id], color: COLORS[id] });
   emit('join', { id });
-  console.log(`[net] Hráč ${id} pripojený.`);
+  console.log(`[net] Hráč ${id} (${ROLES[id]}) pripojený z ${req.socket.remoteAddress}`);
 
   if (state.pausedFor === id) state.pausedFor = 0;
   if (state.phase === 'waiting' && bothConnected()) startWarehouse();
 
   ws.on('message', (raw) => {
     if (sockets[id] !== ws) return;
-    
-    // ZMENA: Zapíšeme prijatý paket do logu
-    if (id === 1) netStats.rx1++;
-    if (id === 2) netStats.rx2++;
-
+    links[id].rx++;
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
+    if (msg && msg.type === 'pong') return onPong(id, msg.t);
     try { handleMessage(id, msg); } catch (e) { console.error('[msg]', e); }
   });
 
@@ -490,10 +507,63 @@ wss.on('connection', (ws, req) => {
 });
 
 wss.on('listening', () => {
+  const ips = [];
+  for (const [name, list] of Object.entries(os.networkInterfaces())) {
+    for (const a of list || []) {
+      if (a.family === 'IPv4' && !a.internal) ips.push({ ip: a.address, name });
+    }
+  }
   console.log('══════════════════════════════════════════════');
-  console.log('  SERVER BEŽÍ');
+  console.log('  FRIENDSLOP TRUCK — server beží');
+  console.log(`  ws://localhost:${PORT}   ← host (ty)`);
+  for (const { ip, name } of ips) {
+    console.log(`  ws://${ip}:${PORT}  (${name})${ip.startsWith('25.') ? '   ← Hamachi, pošli kamarátovi' : ''}`);
+  }
+  console.log('  Čakám na 2 hráčov…');
+  console.log('  Tip: neklikaj do tohto okna — označenie textu pozastaví server.');
   console.log('══════════════════════════════════════════════');
 });
+
+wss.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') console.error(`Port ${PORT} je obsadený — beží už iný server? Zmeň PORT hore v server.js.`);
+  else console.error(e);
+  process.exit(1);
+});
+
+// ─── PING + PRISPÔSOBENIE RÝCHLOSTI POSIELANIA ────────────────────
+// Ping ide tou istou cestou ako tick. Keď sa dáta hromadia, ping vyletí hore
+// → tomu hráčovi posielame menej často, kým sa fronta nevyprázdni.
+setInterval(() => {
+  const t = Date.now();
+  for (const id of [1, 2]) send(sockets[id], { type: 'ping', t });
+}, PING_MS);
+
+function onPong(id, t) {
+  if (!Number.isFinite(t)) return;
+  const L = links[id];
+  const rtt = Math.max(0, Date.now() - t);
+  L.ping = L.ping ? Math.round(L.ping * 0.6 + rtt * 0.4) : rtt;
+  if (rtt > SLOW_PING) {
+    if (L.sendEvery < MAX_SEND_EVERY) L.sendEvery++;
+    L.goodPongs = 0;
+  } else if (rtt < GOOD_PING) {
+    L.goodPongs++;
+    if (L.goodPongs >= 4 && L.sendEvery > 1) { L.sendEvery--; L.goodPongs = 0; }
+  }
+}
+
+setInterval(() => {
+  const parts = [];
+  for (const id of [1, 2]) {
+    if (!sockets[id]) continue;
+    const L = links[id];
+    const secs = NET_LOG_MS / 1000;
+    parts.push(`P${id} ping ${L.ping} ms · ${(L.sent / secs).toFixed(0)} tick/s · ${(L.bytes / 1024 / secs).toFixed(1)} KB/s`
+      + (L.skipped ? ` · vynechané ${L.skipped}` : ''));
+    L.sent = 0; L.bytes = 0; L.rx = 0; L.skipped = 0;
+  }
+  if (parts.length) console.log(`[net] ${parts.join('  |  ')}`);
+}, NET_LOG_MS);
 
 setInterval(() => {
   for (const ws of wss.clients) {
@@ -514,61 +584,81 @@ function step(dt) {
   else if (s.phase === 'driving') drivingTick(dt);
 }
 
-function tickPayload() {
-  const s = state;
-  const pl = (id) => ({ x: r3(s.players[id].x), z: r3(s.players[id].z), connected: s.players[id].connected });
-  
-  // ZMENA: Obrovská úspora dát - škatule posielame LEN ak sme v sklade
-  const boxesPayload = s.phase === 'warehouse' 
-    ? s.boxes.map((b) => ({ id: b.id, x: r3(b.x), z: r3(b.z), loaded: b.loaded, carriedBy: b.carriedBy }))
-    : [];
+// Tick je kompaktný: hrozby, škatule a hráči sú polia namiesto objektov (client.html ich rozbalí).
+//   players:  { 1: [x, z, connected], 2: [...] }
+//   threats:  [[id, typ (0 jeleň / 1 bandita), x, z, dir, stunned], ...]
+//   boxes:    [[id, x, z, loaded, carriedBy], ...]   (len v sklade)
+// Veci, ktoré sa menia zriedka (peniaze, upgrady…), idú v "meta" — len keď sa zmenia.
+const THREAT_CODE = { deer: 0, bandit: 1 };
 
+function tickBase() {
+  const s = state;
+  const pl = (id) => [r2(s.players[id].x), r2(s.players[id].z), s.players[id].connected ? 1 : 0];
   return {
     type: 'tick',
+    now: Date.now(),
     phase: s.phase,
     players: { 1: pl(1), 2: pl(2) },
-    threats: s.threats.map((t) => ({ id: t.id, type: t.type, x: r3(t.x), z: r3(t.z), dir: t.dir, stunned: t.stunned > 0, hp: t.hp })),
+    threats: s.phase === 'driving'
+      ? s.threats.map((t) => [t.id, THREAT_CODE[t.type], r2(t.x), r2(t.z), t.dir, t.stunned > 0 ? 1 : 0])
+      : [],
+    boxes: s.phase === 'warehouse'
+      ? s.boxes.map((b) => [b.id, r2(b.x), r2(b.z), b.loaded ? 1 : 0, b.carriedBy || 0])
+      : [],
     cargo: r3(s.cargo),
     fuel: r3(s.fuel),
-    dist: r3(s.dist),
-    boxes: boxesPayload,
-    phaseTimer: r3(Math.max(0, s.completeTimer)),
-    shotHits,
-    events,
-    truckX: r3(s.truckX),
+    dist: r2(s.dist),
+    truckX: r2(s.truckX),
     speed: s.phase === 'driving' ? truckSpeed() : 0,
-    cash: s.cash,
-    upgrades: s.upgrades,
-    trip: s.trip,
     loaded: s.loadedCount,
-    total: s.totalBoxes,
-    gunCd: r3(s.gunCooldown),
-    gunCdMax: r3(gunCooldownMax()),
-    hornCd: r3(s.hornCooldown),
-    hornCdMax: r3(hornCooldownMax()),
+    gunCd: r2(s.gunCooldown),
+    hornCd: r2(s.hornCooldown),
     paused: s.pausedFor ? { id: s.pausedFor, t: Math.ceil(s.pauseTimer) } : null,
-    lastTrip: s.lastTrip,
-    reason: s.reason,
-    earned: s.totalEarned,
+    ping: { 1: links[1].ping, 2: links[2].ping },
+  };
+}
+
+function tickMeta() {
+  const s = state;
+  return {
+    cash: s.cash, upgrades: s.upgrades, trip: s.trip, total: s.totalBoxes,
+    gunCdMax: r3(gunCooldownMax()), hornCdMax: r3(hornCooldownMax()),
+    lastTrip: s.lastTrip, reason: s.reason, earned: s.totalEarned,
   };
 }
 
 let lastTickAt = Date.now();
+let lastTickError = '';
 setInterval(() => {
   const now = Date.now();
   const dt = Math.min((now - lastTickAt) / 1000, MAX_DT);
   lastTickAt = now;
-  try { step(dt); } catch (e) { }
-  
-  const payloadString = JSON.stringify(tickPayload());
-  
+  try { step(dt); } catch (e) {
+    if (String(e) !== lastTickError) { lastTickError = String(e); console.error('[tick]', e); }
+  }
+
+  const base = tickBase();
+  const meta = tickMeta();
+  const metaStr = JSON.stringify(meta);
   for (const id of [1, 2]) {
     const ws = sockets[id];
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(payloadString);
-      // ZMENA: Zarátame veľkosť odoslaných dát do nášho logu
-      netStats.txBytes += payloadString.length; 
-    }
+    const L = links[id];
+    if (!ws || ws.readyState !== WebSocket.OPEN) continue;
+    // udalosti si odložíme, kým ich hráč reálne nedostane (aj keď tick vynecháme)
+    if (events.length) L.events.push(...events);
+    if (shotHits.length) L.hits.push(...shotHits);
+    if (L.events.length > 60) L.events.splice(0, L.events.length - 60);
+    L.tickCount++;
+    if (L.tickCount % L.sendEvery !== 0) continue;           // pomalé spojenie → menej často
+    if (ws.bufferedAmount > MAX_BUFFERED) { L.skipped++; continue; }  // ešte neodišiel ani minulý
+    const payload = { ...base, events: L.events, shotHits: L.hits };
+    if (metaStr !== L.meta) { payload.meta = meta; L.meta = metaStr; }
+    const str = JSON.stringify(payload);
+    ws.send(str);
+    L.events = [];
+    L.hits = [];
+    L.sent++;
+    L.bytes += str.length;
   }
   events = [];
   shotHits = [];
